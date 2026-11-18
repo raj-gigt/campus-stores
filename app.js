@@ -93,7 +93,7 @@
     version: 1,
     tab: "Requests",
     phase: 0,
-    selected: "",
+    selected: "RQ-214",
     filter: "All items",
     loans: [
       {
@@ -158,6 +158,44 @@
     "</div></div>";
   const badge = (t, good = false) =>
     '<span class="tag' + (good ? " good" : "") + '">' + esc(t) + "</span>";
+  function kitSummary(r) {
+    const slips = s.loans.filter((l) => l.req === r.id);
+    const active = slips.filter((l) => !l.back);
+    const issued = new Set(slips.map((l) => getAsset(l.asset).type)).size;
+    const returned = new Set(slips.filter((l) => l.back && !active.some((a) => getAsset(a.asset).type === getAsset(l.asset).type)).map((l) => getAsset(l.asset).type)).size;
+    if (!issued) return "Not issued · " + r.items.length + " items needed";
+    if (!active.length && issued === r.items.length) return "Kit complete · " + returned + " of " + r.items.length + " returned";
+    if (returned) return returned + " of " + r.items.length + " returned · " + active.length + " outstanding" + (issued < r.items.length ? " · " + (r.items.length - issued) + " not issued" : "");
+    return issued + " of " + r.items.length + " issued";
+  }
+  function kit(r) {
+    const slips = s.loans.filter((l) => l.req === r.id);
+    const missing = r.items.filter((type) => !slips.some((l) => getAsset(l.asset).type === type));
+    let html = '<section class="kit" aria-label="Request kit"><div class="sectionhead"><div><h3>Approved kit & handover</h3><small>' + esc(kitSummary(r)) + '</small></div></div>';
+    for (const type of r.items) {
+      const matches = slips.filter((l) => getAsset(l.asset).type === type);
+      const l = matches.find((l) => !l.back) || matches[matches.length - 1];
+      if (!l) continue;
+      html += '<article class="kit-item"><div class="row"><div><strong>' + esc(type) + '</strong><small>' + (l ? esc(l.asset + ' · ' + getAsset(l.asset).model + ' · L-' + l.num) : 'Choose a physical unit below') + '</small></div>' + badge(l ? (l.back ? 'Returned' : 'Outstanding') : 'Not issued', !!l && l.back) + '</div>';
+      if (l) {
+        html += '<p class="muted">Collected by ' + esc(l.who) + ' · Due ' + esc(l.due) + '</p>';
+        if (!l.back) {
+          if (l.expectedFrom || l.expectedAt || l.handover) html += '<div class="handover"><strong>Next shift</strong><p>' + esc([l.expectedFrom && 'Expected from ' + l.expectedFrom, l.expectedAt].filter(Boolean).join(' · ')) + '</p><p>' + esc(l.handover || '') + '</p></div>';
+          html += '<div class="buttons">' + btn('Record return · ' + l.asset, 'return', String(l.num)) + '</div><details class="handover-edit"><summary>' + (l.expectedFrom || l.expectedAt || l.handover ? 'Edit item handover' : 'Add item handover') + '</summary><form data-handover="' + l.num + '"><div class="form"><label><span>Expected from</span><select name="expectedFrom"><option value="">Not known</option>' + people.map((p) => '<option' + (p === l.expectedFrom ? ' selected' : '') + '>' + esc(p) + '</option>').join('') + '</select></label><label><span>Expected return</span><input name="expectedAt" maxlength="80" placeholder="e.g. Saturday, 9 am" value="' + esc(l.expectedAt || '') + '"></label><label class="full"><span>Note for this item</span><textarea name="handover" maxlength="400" rows="2">' + esc(l.handover || '') + '</textarea></label></div><button type="submit">Save item handover</button></form></details>';
+        } else if (l.expectedFrom || l.expectedAt || l.handover) html += '<p class="muted">Handover resolved · ' + esc(l.expectedFrom || '') + ' · ' + esc(l.expectedAt || '') + '</p>';
+      }
+      html += '</article>';
+    }
+    if (missing.length) {
+      html += '<form data-kit="' + r.id + '"><h3>Prepare ' + (slips.length ? 'remaining items' : 'the kit') + '</h3><p class="muted">Check all ' + r.items.length + ' approved items before the collector leaves.</p><div class="form">';
+      for (const type of missing) {
+        const available = assets.filter((a) => a.type === type && !a.repair && !out(a.id));
+        html += '<label class="full"><span>' + esc(type) + '</span><select name="unit" required><option value="">' + (available.length ? 'Select unit…' : 'No units available') + '</option>' + opts(available.map((a) => [a.id, a.id + ' · ' + a.model + ' · Shelf ' + a.bin])) + '</select></label>';
+      }
+      html += '<label><span>Collected by</span><select name="who" required><option value="">Select collector…</option>' + opts(people.map((p) => [p,p])) + '</select></label><label><span>Return by</span><input name="due" value="' + esc(r.due) + '" maxlength="80" required></label></div><button type="submit" class="primary">Issue ' + missing.length + ' kit items</button></form>';
+    }
+    return html + '</section>';
+  }
   function requestPage() {
     let html = head(
       "Approved requests",
@@ -177,18 +215,16 @@
         r.owner +
         "</p><p><b>Return by</b> " +
         r.due +
-        "</p><p><b>Approved equipment</b></p><ul>" +
-        r.items.map((x) => "<li>" + x + "</li>").join("") +
-        "</ul><p>" +
+        "</p><p>" +
         r.note +
-        "</p></div>";
+        "</p></div>" + kit(r);
     } else
       html += requests
         .map((r) =>
           row(
             r.event,
-            r.id + " · " + r.club,
-            btn("View form", "request", r.id),
+            r.id + " · " + r.club + " · " + kitSummary(r),
+            btn("Open kit", "request", r.id),
           ),
         )
         .join("");
@@ -294,11 +330,37 @@
       );
     return html;
   }
+  const hasHandover = (l) => l.expectedFrom || l.expectedAt || l.handover;
+  function shiftHandover() {
+    const handovers = s.loans.filter(hasHandover);
+    const pending = handovers.filter((l) => !l.back);
+    const resolved = handovers.filter((l) => l.back);
+    const groups = (loans) => requests.map((r) => {
+      const items = loans.filter((l) => l.req === r.id);
+      if (!items.length) return "";
+      return '<section class="handover-group"><div class="sectionhead"><div><h3>' + esc(r.club + ' · ' + r.event) + '</h3><small>' + esc(r.id + ' · ' + kitSummary(r)) + '</small></div>' + btn('Open kit', 'request', r.id) + '</div>' + items.map((l) => {
+        const a = getAsset(l.asset);
+        return '<article class="record"><div class="sectionhead"><h3>' + esc(l.asset + ' · ' + a.type) + '</h3>' + badge(l.back ? 'Resolved · returned' : 'Outstanding', l.back) + '</div><small>' + esc('L-' + l.num + ' · Collected by ' + l.who + ' · Due ' + l.due) + '</small>' + (l.expectedFrom ? '<p><b>Expected from</b> ' + esc(l.expectedFrom) + '</p>' : '') + (l.expectedAt ? '<p><b>Expected return</b> ' + esc(l.expectedAt) + '</p>' : '') + (l.handover ? '<p>' + esc(l.handover) + '</p>' : '') + (shifts[l.handoverPhase] ? '<p><small>Last updated ' + esc(shifts[l.handoverPhase].time) + '</small></p>' : '') + '</article>';
+      }).join('') + '</section>';
+    }).join('');
+    const notes = s.notes.slice().reverse().map((n) =>
+      '<article class="record"><small>' + esc(shifts[n.phase].time) + '</small><p>' + esc(n.text) + '</p></article>'
+    ).join('');
+    const noteForm = '<form data-note><div class="form"><label class="full"><span>Note for the next shift</span><textarea name="note" rows="2" maxlength="400" required></textarea></label></div><button type="submit">Add handover note</button></form>';
+    return '<section class="shift-handover" aria-label="Next shift handover">' +
+      head('Next shift handover', pending.length + ' outstanding item' + (pending.length === 1 ? '' : 's') + ' · ' + s.notes.length + ' general note' + (s.notes.length === 1 ? '' : 's')) +
+      (pending.length ? groups(pending) : '') + notes +
+      (!pending.length && !s.notes.length ? '<p class="muted">No handover notes yet. Add a note below or save an item handover in a kit.</p>' : '') +
+      noteForm +
+      (resolved.length ? '<details class="resolved-handovers"><summary>Resolved item handovers (' + resolved.length + ')</summary>' + groups(resolved) + '</details>' : '') + '</section>';
+  }
   function deskbook() {
     let html = head(
       "Desk book",
       "Messages from clubs and notes for the next shift",
     );
+    html += shiftHandover();
+    html += '<h3 class="desk-messages-title">Club messages</h3>';
     const entries = [
       [
         "Friday · 3:20 pm",
@@ -317,8 +379,6 @@
         "Kabir Sen · Film Society",
         "I brought the projector and speaker. Leela Das has our adapter. She’ll be at the counter at 9 am tomorrow.",
       ]);
-    for (const n of s.notes)
-      entries.push([shifts[n.phase].time, "Counter handover", n.text]);
     for (const [t, author, body] of entries.slice().reverse())
       html +=
         '<article class="record"><small>' +
@@ -328,10 +388,7 @@
         "</h3><p>" +
         esc(body) +
         "</p></article>";
-    return (
-      html +
-      '<form data-note><div class="form"><label class="full"><span>Note for the next shift</span><textarea name="note" rows="2" maxlength="400" required></textarea></label></div><button type="submit">Add handover note</button></form>'
-    );
+    return html;
   }
   const screens = {
     Requests: requestPage,
@@ -344,6 +401,11 @@
     q("[data-clock]").textContent = phase.time;
     q("[data-shift-title]").textContent = phase.title;
     q("[data-shift]").textContent = phase.text;
+    q("[data-comment]").textContent = [
+      "My change: the request now has one kit checklist. Select all three physical units and issue them together to Kabir. This makes the adapter visible before he leaves; individual loan slips and availability checks are kept.",
+      "My change: record the projector and speaker returns in the same kit view. The count shows 2 of 3 returned. Add Leela and Saturday, 9 am to the adapter’s item handover so the next shift inherits the exact outstanding unit. Saved item handovers also appear together in Desk book automatically.",
+      "My change: the kit and Desk book carry the saved handover into the morning. Match Leela’s adapter ID to the outstanding unit before recording its return. The kit then shows all 3 returned and the item handover is resolved. Test at a real counter: can the next operator finish without asking the previous shift?"
+    ][s.phase];
     const advance = q('[data-action="advance"]');
     advance.hidden = !phase.next;
     advance.textContent = phase.next || "";
@@ -395,6 +457,7 @@
         s.selected = "";
         break;
       case "request":
+        s.tab = "Requests";
         s.selected = v;
         break;
       case "new":
@@ -426,6 +489,31 @@
     e.preventDefault();
     const f = e.target;
     const form = new FormData(f);
+    if (f.matches("[data-handover]")) {
+      const l = s.loans.find((l) => l.num === Number(f.dataset.handover) && !l.back);
+      if (!l) return;
+      l.expectedFrom = String(form.get("expectedFrom") || "");
+      l.expectedAt = String(form.get("expectedAt") || "").trim().slice(0, 80);
+      l.handover = String(form.get("handover") || "").trim().slice(0, 400);
+      l.handoverPhase = s.phase;
+      commit("Item handover saved for " + l.asset + " and shared in Desk book.");
+      return;
+    }
+    if (f.matches("[data-kit]")) {
+      const r = getReq(f.dataset.kit);
+      if (!r) return;
+      const missing = r.items.filter((type) => !s.loans.some((l) => l.req === r.id && getAsset(l.asset).type === type));
+      const units = form.getAll("unit").map(getAsset);
+      const who = form.get("who"), due = String(form.get("due") || "").trim().slice(0, 80);
+      if (!people.includes(who) || !due || !missing.length || units.length !== missing.length || units.some((a, i) => !a || a.repair || out(a.id) || a.type !== missing[i])) {
+        q("[data-status]").textContent = "Check the collector and available unit for every missing kit item.";
+        return;
+      }
+      let num = Math.max(400, ...s.loans.map((l) => l.num));
+      for (const a of units) s.loans.push({ num: ++num, req: r.id, asset: a.id, who, due, back: false });
+      commit("Issued " + units.length + " items to " + who + ". Kit checklist updated.");
+      return;
+    }
     if (f.matches("[data-note]")) {
       const text = String(form.get("note")).trim();
       if (!text) return;

@@ -369,3 +369,34 @@ body > main {
     min-height: 44px;
   }
 }
+
+#campus-stores .scenario-comment {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid currentColor;
+  font-size: 13px;
+}
+#campus-stores .scenario-comment strong { display: block; }
+#campus-stores .shift > div { max-width: 78ch; }
+#campus-stores .kit { margin-top: 20px; }
+#campus-stores .kit-item { padding-bottom: 14px; overflow-wrap: anywhere; }
+#campus-stores .kit-item .row { margin-top: 6px; }
+#campus-stores .handover { background: var(--memo); color: var(--memotxt); padding: 10px 12px; margin-top: 9px; border-radius: 6px; }
+#campus-stores .handover-edit { margin-top: 8px; }
+#campus-stores .kit > form { border-top: 1px solid var(--line); padding-top: 14px; }
+@container (max-width:420px) {
+  #campus-stores .kit-item .row { grid-template-columns: minmax(0, 1fr); }
+}
+
+#campus-stores .shift-handover {
+  padding: 14px;
+  background: var(--desk);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+#campus-stores .handover-group { margin-top: 16px; }
+#campus-stores .handover-group .record { background: var(--paper); }
+#campus-stores .handover-group .sectionhead { margin-bottom: 6px; }
+#campus-stores .resolved-handovers { margin-top: 16px; }
+#campus-stores .desk-messages-title { margin-top: 20px; }
